@@ -287,9 +287,13 @@ body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-
             <option value="outro">Outro</option>
           </select>
         </div>
-        <div class="field span2">
+        <div class="field">
           <label>Crédito de IVA do Período Anterior (MZN)</label>
           <input id="credito-anterior" type="number" min="0" step="0.01" placeholder="0.00"/>
+        </div>
+        <div class="field">
+          <label>Créditos Comunicados pelos Serviços (MZN)</label>
+          <input id="creditos-comunicados" type="number" min="0" step="0.01" placeholder="0.00"/>
         </div>
       </div>
     </div>
@@ -297,15 +301,43 @@ body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-
     <!-- DOCUMENTOS -->
     <div class="slabel">02 — Documentos Contabilísticos</div>
     <div class="card">
+
+      <!-- SELECTOR DE MODO -->
+      <div class="field" style="margin-bottom:16px">
+        <label>Tipo de documento</label>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button type="button" class="modo-btn active" id="modo-csv" onclick="setModo('csv')" style="flex:1;padding:10px;border-radius:var(--r);border:1px solid var(--border2);background:var(--blue-dim);color:var(--text);font-family:var(--sans);font-size:12px;cursor:pointer">
+            <i class="ti ti-table" style="display:block;font-size:18px;margin-bottom:4px"></i>
+            CSV Estruturado
+            <div style="font-size:10px;color:var(--text2);margin-top:2px">Colunas conhecidas, cálculo no browser</div>
+          </button>
+          <button type="button" class="modo-btn" id="modo-bruto" onclick="setModo('documento_bruto')" style="flex:1;padding:10px;border-radius:var(--r);border:1px solid var(--border2);background:none;color:var(--text2);font-family:var(--sans);font-size:12px;cursor:pointer">
+            <i class="ti ti-file-search" style="display:block;font-size:18px;margin-bottom:4px"></i>
+            Documento Bruto (IA)
+            <div style="font-size:10px;color:var(--text2);margin-top:2px">Excel/PDF de qualquer ERP — leitura por IA</div>
+          </button>
+        </div>
+      </div>
+
       <div class="drop" id="dz" onclick="document.getElementById('fi').click()">
         <i class="ti ti-cloud-upload drop-ico"></i>
-        <div class="drop-main">Solta os ficheiros ou clica para seleccionar</div>
-        <div class="drop-sub">Mapa de vendas + mapa de compras do período</div>
+        <div class="drop-main" id="drop-main-txt">Solta os ficheiros ou clica para seleccionar</div>
+        <div class="drop-sub" id="drop-sub-txt">Mapa de vendas + mapa de compras do período</div>
         <div class="dtags">
           <span class="dtag">XLSX</span>
           <span class="dtag">CSV</span>
           <span class="dtag">PDF</span>
           <span class="dtag">OFX</span>
+        </div>
+        <div class="drop-sub" id="drop-hint-csv" style="margin-top:10px;font-size:11px;opacity:.75">
+          Colunas opcionais reconhecidas: <b>Taxa</b> (16%/5%/0%), <b>Tipo Isenção</b> (art18/sem_direito),
+          <b>Categoria Compra</b> (imobilizado/existencias/importacao/outros). Sem estas colunas, o sistema
+          assume 16% nas vendas e "Outros bens e serviços" nas compras — seguro, mas menos preciso no Modelo A.
+        </div>
+        <div class="drop-sub" id="drop-hint-bruto" style="display:none;margin-top:10px;font-size:11px;opacity:.75">
+          Qualquer formato de export (Primavera, SAP, Excel manual, PDF digitalizado). A IA lê o documento e
+          estrutura os lançamentos automaticamente — linhas que não puderem ser confirmadas matematicamente
+          aparecem sinalizadas no relatório para revisão, nunca são corrigidas às escondidas.
         </div>
       </div>
       <input type="file" id="fi" multiple accept=".xlsx,.csv,.pdf,.ofx,.xml,.txt" onchange="onFiles(this.files)"/>
@@ -350,6 +382,25 @@ body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-
         </div>
       </div>
 
+      <!-- Avisos da Camada 1 (extracção por IA) — só aparece no modo documento_bruto -->
+      <div id="avisos-extraccao-wrap" style="display:none;margin-bottom:12px;background:var(--navy3);border:1px solid var(--amber);border-radius:var(--r2);padding:14px">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--amber);font-weight:700;margin-bottom:8px">
+          <i class="ti ti-robot"></i> LEITURA POR IA — CONFIRMAR
+        </div>
+        <div id="avisos-extraccao-lista" style="font-size:12px;color:var(--text2);line-height:1.6"></div>
+      </div>
+
+      <!-- Lançamentos para revisão humana — bloqueante, exige acção -->
+      <div id="revisao-wrap" style="display:none;margin-bottom:12px;background:var(--navy3);border:1px solid var(--red);border-radius:var(--r2);padding:14px">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--red);font-weight:700;margin-bottom:8px">
+          <i class="ti ti-alert-triangle"></i> LANÇAMENTOS NÃO VALIDADOS — NÃO INCLUÍDOS NOS TOTAIS
+        </div>
+        <div id="revisao-lista" style="font-size:12px;color:var(--text2);line-height:1.6"></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">
+          Estes valores ficaram de fora do cálculo. Verifique o documento original e insira-os manualmente, ou corrija e reprocesse.
+        </div>
+      </div>
+
       <!-- KPIs -->
       <div class="kpi-grid">
         <div class="kpi"><div class="kpi-val b" id="k-total">0</div><div class="kpi-lbl">Operações</div></div>
@@ -369,8 +420,10 @@ body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-
 
       <!-- Downloads -->
       <div class="dl-grid">
-        <button class="btn-dl btn-dl-main" onclick="dlPDF('formulario')"><i class="ti ti-file-invoice"></i> Formulário M/IVA (PDF)</button>
-        <button class="btn-dl btn-dl-main" onclick="dlPDF('relatorio')"  style="background:var(--navy3);border:1px solid var(--blue)"><i class="ti ti-shield-check"></i> Relatório Conformidade</button>
+        <button class="btn-dl btn-dl-main" onclick="dlExcelPDF()" style="background:var(--blue2)"><i class="ti ti-file-type-pdf"></i> Modelo A Oficial (PDF)</button>
+        <button class="btn-dl btn-dl-main" onclick="dlExcelXlsx()" style="background:var(--navy3);border:1px solid var(--blue)"><i class="ti ti-file-spreadsheet"></i> Modelo A Oficial (Excel)</button>
+        <button class="btn-dl btn-dl-sec" onclick="dlPDF('formulario')"><i class="ti ti-file-invoice"></i> Resumo Tabular (PDF)</button>
+        <button class="btn-dl btn-dl-sec" onclick="dlPDF('relatorio')"><i class="ti ti-shield-check"></i> Relatório Conformidade</button>
         <button class="btn-dl btn-dl-sec"  onclick="dlDoc('formulario')"><i class="ti ti-file-text"></i> Formulário (Google Doc)</button>
         <button class="btn-dl btn-dl-sec"  onclick="partilhar()"><i class="ti ti-share"></i> Partilhar</button>
       </div>
@@ -422,7 +475,28 @@ body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-
 // ── STATE ──
 let files = [];
 let resultado = null;
+let modoActual = 'csv';
 const KEY_URL = 'fiscalmoz_gas_url';
+
+// ── SELECTOR DE MODO ──
+function setModo(modo) {
+  modoActual = modo;
+  document.getElementById('modo-csv').classList.toggle('active', modo === 'csv');
+  document.getElementById('modo-bruto').classList.toggle('active', modo === 'documento_bruto');
+  document.getElementById('modo-csv').style.background = modo === 'csv' ? 'var(--blue-dim)' : 'none';
+  document.getElementById('modo-csv').style.color = modo === 'csv' ? 'var(--text)' : 'var(--text2)';
+  document.getElementById('modo-bruto').style.background = modo === 'documento_bruto' ? 'var(--blue-dim)' : 'none';
+  document.getElementById('modo-bruto').style.color = modo === 'documento_bruto' ? 'var(--text)' : 'var(--text2)';
+
+  document.getElementById('drop-hint-csv').style.display = modo === 'csv' ? 'block' : 'none';
+  document.getElementById('drop-hint-bruto').style.display = modo === 'documento_bruto' ? 'block' : 'none';
+  document.getElementById('drop-main-txt').textContent = modo === 'csv'
+    ? 'Solta os ficheiros ou clica para seleccionar'
+    : 'Solta o documento (qualquer formato) ou clica para seleccionar';
+  document.getElementById('drop-sub-txt').textContent = modo === 'csv'
+    ? 'Mapa de vendas + mapa de compras do período'
+    : 'Export do Primavera, SAP, Excel manual, PDF — a IA lê e estrutura';
+}
 const historico = [];
 
 // ── INIT ──
@@ -509,11 +583,12 @@ function cfgLog(m,cls='') {
 // ── PROCESSAR ──
 async function iniciar() {
   const gasUrl  = document.getElementById('gas-url').value.trim() || localStorage.getItem(KEY_URL) || '';
-  const empresa = document.getElementById('empresa').value.trim() || 'Empresa';
+  const empresa = document.getElementById('empresa').value.trim() || '';
   const nuit    = document.getElementById('nuit').value.trim();
   const periodo = document.getElementById('periodo').value;
   const activ   = document.getElementById('actividade').value;
   const credAnt = parseFloat(document.getElementById('credito-anterior').value) || 0;
+  const credComunicados = parseFloat(document.getElementById('creditos-comunicados').value) || 0;
 
   document.getElementById('result-wrap').style.display = 'none';
   document.getElementById('pbar-wrap').style.display   = 'block';
@@ -526,69 +601,11 @@ async function iniciar() {
   const t0 = Date.now();
 
   try {
-    // PASSO 1 — Ler e parsear CSVs no browser
-    setStep('s1','active'); prog(10,'A ler ficheiros...');
-    log('A processar ' + files.length + ' ficheiro(s) localmente...');
-
-    const operacoes = [];
-    for (const f of files) {
-      const texto = await lerFicheiro(f);
-      const ops   = parsearCSV(texto, f.name);
-      operacoes.push(...ops);
-      log('Lido: ' + f.name + ' → ' + ops.length + ' linhas ✓', 'ok');
+    if (modoActual === 'documento_bruto') {
+      await iniciarDocumentoBruto({ gasUrl, empresa, nuit, periodo, activ, credAnt, credComunicados, t0 });
+    } else {
+      await iniciarCSV({ gasUrl, empresa, nuit, periodo, activ, credAnt, credComunicados, t0 });
     }
-
-    // Calcular totais no browser
-    const totais = calcularTotais(operacoes, credAnt);
-    log('Totais calculados: IVA Liquidado=' + totais.ivaLiquidado.toFixed(2) + ' | IVA Dedutível=' + totais.ivaDedutivel.toFixed(2), 'ok');
-    setStep('s1','done');
-
-    if (!gasUrl) {
-      await demoFlow(empresa, periodo);
-      return;
-    }
-
-    // PASSO 2 — Enviar totais + texto ao GAS (não base64 pesado)
-    setStep('s2','active'); prog(25,'A enviar para o GAS...');
-    const textoOperacoes = operacoes.slice(0, 80).map(o =>
-      o.data + '|' + o.descricao + '|' + o.tipo + '|' + o.base + '|' + o.iva
-    ).join('\n');
-
-    const payload = {
-      empresa, nuit, periodo, actividade: activ,
-      totais,
-      textoOperacoes,
-      totalLinhas: operacoes.length
-    };
-
-    log('A enviar ' + operacoes.length + ' operações para o GAS...');
-    const resp = await fetch(gasUrl, {
-      method:  'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body:    JSON.stringify(payload)
-    });
-
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const data = await resp.json();
-    if (!data.ok) throw new Error(data.erro || 'Erro no GAS');
-    setStep('s2','done'); log('GAS recebeu ✓', 'ok');
-
-    setStep('s3','active'); prog(55,'Gemini a analisar conformidade...');
-    log('Gemini a efectuar revisão fiscal ✓', 'ok');
-    setStep('s3','done');
-
-    setStep('s4','active'); prog(75,'A verificar conformidade...');
-    log('Auditoria concluída ✓', 'ok');
-    setStep('s4','done');
-
-    setStep('s5','active'); prog(90,'A gerar documentos PDF...');
-    log('Formulário M/IVA e Relatório gerados ✓', 'ok');
-    setStep('s5','done'); prog(100,'Concluído!');
-
-    resultado = data.data;
-    mostrarResultado(resultado, Date.now()-t0);
-    guardarHistorico(empresa, nuit, periodo, resultado);
-
   } catch(e) {
     log('ERRO: ' + e.message,'err');
     toast('Erro: ' + e.message, 'err');
@@ -596,6 +613,139 @@ async function iniciar() {
   } finally {
     setBtnState(false);
   }
+}
+
+// ── MODO CSV ESTRUTURADO (fluxo original) ──
+async function iniciarCSV({ gasUrl, empresa, nuit, periodo, activ, credAnt, credComunicados, t0 }) {
+  // PASSO 1 — Ler e parsear CSVs no browser
+  setStep('s1','active'); prog(10,'A ler ficheiros...');
+  log('A processar ' + files.length + ' ficheiro(s) localmente...');
+
+  const operacoes = [];
+  for (const f of files) {
+    const texto = await lerFicheiro(f);
+    const ops   = parsearCSV(texto, f.name);
+    operacoes.push(...ops);
+    log('Lido: ' + f.name + ' → ' + ops.length + ' linhas ✓', 'ok');
+  }
+
+  // Calcular totais no browser
+  const totais = calcularTotais(operacoes, credAnt);
+  totais.creditosComunicados = credComunicados;
+  log('Totais calculados: IVA Liquidado=' + totais.ivaLiquidado.toFixed(2) + ' | IVA Dedutível=' + totais.ivaDedutivel.toFixed(2), 'ok');
+  setStep('s1','done');
+
+  if (!gasUrl) {
+    await demoFlow(empresa, periodo);
+    return;
+  }
+
+  // PASSO 2 — Enviar totais + texto ao GAS (não base64 pesado)
+  setStep('s2','active'); prog(25,'A enviar para o GAS...');
+  const textoOperacoes = operacoes.slice(0, 80).map(o =>
+    o.data + '|' + o.descricao + '|' + o.tipo + '|' + o.base + '|' + o.iva
+  ).join('\n');
+
+  const payload = {
+    modo: 'csv',
+    empresa: empresa || 'Empresa', nuit, periodo, actividade: activ,
+    totais,
+    textoOperacoes,
+    totalLinhas: operacoes.length
+  };
+
+  log('A enviar ' + operacoes.length + ' operações para o GAS...');
+  const resp = await fetch(gasUrl, {
+    method:  'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body:    JSON.stringify(payload)
+  });
+
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const data = await resp.json();
+  if (!data.ok) throw new Error(data.erro || 'Erro no GAS');
+  setStep('s2','done'); log('GAS recebeu ✓', 'ok');
+
+  setStep('s3','active'); prog(55,'Gemini a analisar conformidade...');
+  log('Gemini a efectuar revisão fiscal ✓', 'ok');
+  setStep('s3','done');
+
+  setStep('s4','active'); prog(75,'A verificar conformidade...');
+  log('Auditoria concluída ✓', 'ok');
+  setStep('s4','done');
+
+  setStep('s5','active'); prog(90,'A gerar documentos PDF...');
+  log('Formulário M/IVA e Relatório gerados ✓', 'ok');
+  setStep('s5','done'); prog(100,'Concluído!');
+
+  resultado = data.data;
+  mostrarResultado(resultado, Date.now()-t0);
+  guardarHistorico(empresa, nuit, periodo, resultado);
+}
+
+// ── MODO DOCUMENTO BRUTO (Camada 1 — IA normaliza qualquer formato) ──
+async function iniciarDocumentoBruto({ gasUrl, empresa, nuit, periodo, activ, credAnt, credComunicados, t0 }) {
+  if (!gasUrl) {
+    throw new Error('O modo Documento Bruto precisa de uma ligação ao GAS configurada (aba Configuração) — não tem modo demo.');
+  }
+
+  // PASSO 1 — Converter ficheiros para base64 (sem parsear nada no browser;
+  // a leitura é feita pela IA do lado do GAS)
+  setStep('s1','active'); prog(10,'A preparar ficheiros...');
+  log('A converter ' + files.length + ' ficheiro(s) para envio...');
+
+  const arquivos = [];
+  for (const f of files) {
+    const b64 = await toBase64(f);
+    arquivos.push(b64);
+    log('Preparado: ' + f.name + ' (' + (f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB') + ')', 'ok');
+  }
+  setStep('s1','done');
+
+  // PASSO 2 — Enviar ao GAS (Camada 1: normalização via Gemini)
+  setStep('s2','active'); prog(25,'A enviar para o GAS...');
+  const payload = {
+    modo: 'documento_bruto',
+    empresa, nuit, periodo, actividade: activ,
+    creditoPeriodoAnterior: credAnt,
+    creditosComunicados: credComunicados,
+    arquivos
+  };
+
+  log('A enviar ' + arquivos.length + ' documento(s) para leitura por IA...');
+  const resp = await fetch(gasUrl, {
+    method:  'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body:    JSON.stringify(payload)
+  });
+
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const data = await resp.json();
+  if (!data.ok) throw new Error(data.erro || 'Erro no GAS');
+  setStep('s2','done'); log('GAS recebeu, a processar...', 'ok');
+
+  setStep('s3','active'); prog(50,'IA a ler e normalizar documentos...');
+  log('Gemini a extrair lançamentos de cada documento ✓', 'ok');
+  setStep('s3','done');
+
+  setStep('s4','active'); prog(75,'A validar lançamentos...');
+  const r = data.data;
+  log((r.lancamentosProcessados || 0) + ' lançamento(s) validados deterministicamente ✓', 'ok');
+  if (r.lancamentosParaRevisao && r.lancamentosParaRevisao.length > 0) {
+    log('⚠️ ' + r.lancamentosParaRevisao.length + ' lançamento(s) precisam de revisão humana — ver relatório', 'warn');
+  }
+  if (r.avisosExtraccao && r.avisosExtraccao.length > 0) {
+    r.avisosExtraccao.forEach(a => log('Aviso: ' + a, 'warn'));
+  }
+  setStep('s4','done');
+
+  setStep('s5','active'); prog(90,'A gerar documentos (Excel, PDF)...');
+  log('Modelo A preenchido e exportado ✓', 'ok');
+  setStep('s5','done'); prog(100,'Concluído!');
+
+  resultado = r;
+  mostrarResultado(resultado, Date.now()-t0);
+  guardarHistorico(empresa || r.empresaDetectada || 'Empresa', nuit, periodo, resultado);
 }
 
 // ── LER FICHEIRO ──
@@ -609,6 +759,11 @@ function lerFicheiro(file) {
 }
 
 // ── PARSEAR CSV ──
+// Suporta: taxa 16% e 5% (art.17-A), isentas com/sem direito a dedução,
+// categorias de IVA dedutível (Imobilizado/Existências/Outros/Importações).
+// Todas as colunas novas são OPCIONAIS — se não existirem no CSV, cai em
+// fallback seguro (16% para vendas, "Outros bens e serviços" para compras),
+// para não quebrar ficheiros já em uso pelos clientes-piloto.
 function parsearCSV(texto, nomeFile) {
   const linhas = texto.trim().split('\n').filter(l => l.trim());
   if (linhas.length < 2) return [];
@@ -638,8 +793,11 @@ function parsearCSV(texto, nomeFile) {
   const iTaxa = idx('taxa iva', 'taxa');
   const iDedu = idx('dedutivel', 'dedut');
   const iTotal = idx('total factura', 'total');         // coluna total — NUNCA usar como base
+  // Colunas novas, opcionais:
+  const iIsencao   = idx('tipo isencao', 'tipoisencao', 'isencao');           // "art18" | "sem_direito" | "com_direito"
+  const iCategoria = idx('categoria compra', 'categoriacompra', 'categoria'); // "imobilizado" | "existencias" | "outros" | "importacao"
 
-  console.log('Colunas: data=' + iData + ' desc=' + iDesc + ' base=' + iBase + ' iva=' + iIVA + ' taxa=' + iTaxa + ' dedu=' + iDedu + ' total=' + iTotal);
+  console.log('Colunas: data=' + iData + ' desc=' + iDesc + ' base=' + iBase + ' iva=' + iIVA + ' taxa=' + iTaxa + ' dedu=' + iDedu + ' total=' + iTotal + ' isencao=' + iIsencao + ' categoria=' + iCategoria);
 
   const nomeLower = nomeFile.toLowerCase();
   const isVendas  = nomeLower.includes('venda') || headers.some(h => h.includes('cliente'));
@@ -663,30 +821,57 @@ function parsearCSV(texto, nomeFile) {
       iva = extrairNumero(cols[iIVA]);
     }
 
-    // Taxa — detecta pela coluna taxa ou pelo conteúdo da linha
+    // Taxa — detecta 16%, 5% ou isenta (0%) pela coluna taxa ou pelo conteúdo da linha
     const linhaToda = linhas[i].toLowerCase();
-    const taxaCol   = iTaxa !== -1 ? cols[iTaxa] || '' : '';
-    const isIsenta  = taxaCol.includes('0') || taxaCol.trim() === '0%' ||
+    const taxaCol   = iTaxa !== -1 ? (cols[iTaxa] || '') : '';
+    const taxaColNum = taxaCol.replace(/[^\d.,]/g, '').replace(',', '.');
+    const isIsenta  = taxaCol.includes('0') && !taxaCol.includes('10') && !taxaCol.includes('20') ||
+                      taxaCol.trim() === '0%' ||
                       linhaToda.includes(',0,') ||
                       linhaToda.includes('isent') || linhaToda.includes('export');
-    const taxa = isIsenta ? 0 : 16;
+    const is5pct    = !isIsenta && (taxaColNum === '5' || taxaCol.includes('5%') || linhaToda.includes('art.17-a') || linhaToda.includes('art 17-a') || linhaToda.includes('taxa reduzida'));
+    const taxa = isIsenta ? 0 : (is5pct ? 5 : 16);
 
-    // Se IVA não veio da coluna, calcula
-    if (iva === 0 && taxa === 16) iva = Math.round(base * 0.16 * 100) / 100;
+    // Se IVA não veio da coluna, calcula pela taxa detectada
+    if (iva === 0 && taxa > 0) iva = Math.round(base * (taxa / 100) * 100) / 100;
 
     // Tipo de operação
-    let tipo = 'COMPRA_DEDUTIVEL';
+    let tipo = 'COMPRA_OUTROS'; // fallback seguro — cai no campo 10 do Modelo A (Outros bens e serviços)
+    let subtipoIsencao = null;  // só relevante para vendas isentas
+
     if (isVendas) {
-      tipo = taxa === 0 ? 'VENDA_ISENTA' : 'VENDA_TRIBUTADA_16';
+      if (taxa === 16) {
+        tipo = 'VENDA_TRIBUTADA_16';
+      } else if (taxa === 5) {
+        tipo = 'VENDA_TRIBUTADA_5';
+      } else {
+        // Isenta — distinguir art.18 al.b) vs sem direito a dedução, se a coluna existir
+        const isencaoVal = iIsencao !== -1 ? (cols[iIsencao] || '').trim().toLowerCase() : '';
+        if (isencaoVal.includes('art18') || isencaoVal.includes('art.18') || isencaoVal.includes('com_direito') || isencaoVal.includes('com direito')) {
+          tipo = 'VENDA_ISENTA_ART18';
+        } else {
+          tipo = 'VENDA_ISENTA_SEM_DIREITO'; // fallback — a maioria das isenções correntes
+        }
+      }
     } else if (isCompras) {
       const deduVal = iDedu !== -1 ? (cols[iDedu] || '').trim().toUpperCase() : '';
-      if (deduVal === 'N' ||
+      const isNaoDedutivel = deduVal === 'N' ||
           linhaToda.includes('nao dedut') ||
           linhaToda.includes('representa') ||
           linhaToda.includes('consumo interno') ||
-          linhaToda.includes('alojamento')) {
+          linhaToda.includes('alojamento');
+
+      if (isNaoDedutivel) {
         tipo = 'COMPRA_NAO_DEDUTIVEL';
         iva  = 0;
+      } else {
+        // Distinguir categoria (Imobilizado / Existências / Outros / Importações), se a coluna existir
+        const catVal = iCategoria !== -1 ? (cols[iCategoria] || '').trim().toLowerCase() : '';
+        if (catVal.includes('imobiliz')) tipo = 'COMPRA_IMOBILIZADO';
+        else if (catVal.includes('existenc') || catVal.includes('exist')) tipo = 'COMPRA_EXISTENCIAS';
+        else if (catVal.includes('importa')) tipo = 'COMPRA_IMPORTACAO';
+        else if (linhaToda.includes('importa')) tipo = 'COMPRA_IMPORTACAO';
+        else tipo = 'COMPRA_OUTROS'; // fallback — campo 10 do Modelo A
       }
     }
 
@@ -702,42 +887,85 @@ function parsearCSV(texto, nomeFile) {
 }
 
 // ── CALCULAR TOTAIS ──
+// Agrega operações pelas categorias do Modelo A oficial (campos 01-12).
+// Mantém também os nomes de campo "legados" (vendasTribBase, ivaLiquidado,
+// etc.) para não quebrar o ecrã de resultado actual — mas a fonte de
+// verdade do preenchimento do formulário passa a ser o calcularModeloA()
+// no Code.gs, que recalcula tudo a partir destes totais de forma
+// determinística (nunca confia em ivaLiquidado/ivaEntregar calculados aqui
+// para o preenchimento oficial — só para o resumo no ecrã, antes do GAS responder).
 function calcularTotais(operacoes, credAnt) {
-  let vendasTribBase = 0, vendasTribIVA = 0;
-  let vendasIsentasBase = 0;
-  let comprasDeduBase = 0, comprasDeduIVA = 0;
-  let comprasNaoDeduBase = 0;
+  // Vendas — campos 01, 03, 05, 06, 07
+  let vendasTrib16Base = 0, vendasTrib16IVA = 0;
+  let vendasTrib5Base  = 0, vendasTrib5IVA  = 0;
+  let vendasIsentasArt18Base = 0;
+  let vendasIsentasSemDireitoBase = 0;
+
+  // Compras — campos 08, 09, 10, 11
+  let comprasImobilizadoBase = 0, comprasImobilizadoIVA = 0;
+  let comprasExistenciasBase = 0, comprasExistenciasIVA = 0;
+  let comprasOutrosBase      = 0, comprasOutrosIVA      = 0;
+  let comprasImportacoesBase = 0, comprasImportacoesIVA = 0;
+  let comprasNaoDeduBase     = 0;
 
   for (const op of operacoes) {
     switch(op.tipo) {
       case 'VENDA_TRIBUTADA_16':
-        vendasTribBase += op.base; vendasTribIVA += op.iva; break;
-      case 'VENDA_ISENTA':
-        vendasIsentasBase += op.base; break;
-      case 'COMPRA_DEDUTIVEL':
-        comprasDeduBase += op.base; comprasDeduIVA += op.iva; break;
+        vendasTrib16Base += op.base; vendasTrib16IVA += op.iva; break;
+      case 'VENDA_TRIBUTADA_5':
+        vendasTrib5Base += op.base; vendasTrib5IVA += op.iva; break;
+      case 'VENDA_ISENTA_ART18':
+        vendasIsentasArt18Base += op.base; break;
+      case 'VENDA_ISENTA_SEM_DIREITO':
+        vendasIsentasSemDireitoBase += op.base; break;
+      case 'COMPRA_IMOBILIZADO':
+        comprasImobilizadoBase += op.base; comprasImobilizadoIVA += op.iva; break;
+      case 'COMPRA_EXISTENCIAS':
+        comprasExistenciasBase += op.base; comprasExistenciasIVA += op.iva; break;
+      case 'COMPRA_IMPORTACAO':
+        comprasImportacoesBase += op.base; comprasImportacoesIVA += op.iva; break;
+      case 'COMPRA_OUTROS':
+        comprasOutrosBase += op.base; comprasOutrosIVA += op.iva; break;
       case 'COMPRA_NAO_DEDUTIVEL':
         comprasNaoDeduBase += op.base; break;
     }
   }
 
-  const ivaLiquidado  = Math.round(vendasTribIVA * 100) / 100;
-  const ivaDedutivel  = Math.round(comprasDeduIVA * 100) / 100;
-  const saldo         = Math.round((ivaLiquidado - ivaDedutivel - credAnt) * 100) / 100;
+  const r2 = v => Math.round(v * 100) / 100;
+
+  // Totais "legados" — só para o ecrã de resultado imediato no browser.
+  // O preenchimento oficial do Modelo A é recalculado no GAS (calcularModeloA),
+  // que é a única fonte de verdade para os 27 campos.
+  const ivaLiquidado  = r2(vendasTrib16IVA + vendasTrib5IVA);
+  const ivaDedutivel  = r2(comprasImobilizadoIVA + comprasExistenciasIVA + comprasOutrosIVA + comprasImportacoesIVA);
+  const saldo         = r2(ivaLiquidado - ivaDedutivel - credAnt);
   const ivaEntregar   = saldo > 0 ? saldo : 0;
   const creditoReport = saldo < 0 ? Math.abs(saldo) : 0;
+  const vendasIsentasBase = r2(vendasIsentasArt18Base + vendasIsentasSemDireitoBase);
 
   return {
-    vendasTribBase, vendasTribIVA,
-    vendasIsentasBase,
-    comprasDeduBase, comprasDeduIVA,
+    // Campos novos (alimentam calcularModeloA no GAS)
+    vendasTrib16Base, vendasTrib16IVA,
+    vendasTrib5Base,  vendasTrib5IVA,
+    vendasIsentasArt18Base,
+    vendasIsentasSemDireitoBase,
+    comprasImobilizadoBase, comprasImobilizadoIVA,
+    comprasExistenciasBase, comprasExistenciasIVA,
+    comprasOutrosBase,      comprasOutrosIVA,
+    comprasImportacoesBase, comprasImportacoesIVA,
     comprasNaoDeduBase,
+    creditoPeriodoAnterior: credAnt,
+
+    // Campos legados (compatibilidade com o ecrã de resultado actual)
+    vendasTribBase: vendasTrib16Base, vendasTribIVA: vendasTrib16IVA,
+    vendasIsentasBase,
+    comprasDeduBase: comprasOutrosBase + comprasImobilizadoBase + comprasExistenciasBase + comprasImportacoesBase,
+    comprasDeduIVA:  ivaDedutivel,
     ivaLiquidado,
     ivaDedutivel,
-    creditoPeriodoAnterior: credAnt,
     ivaEntregar,
     creditoReportar: creditoReport,
-    totalTransmissoes: vendasTribBase + vendasIsentasBase
+    totalTransmissoes: r2(vendasTrib16Base + vendasTrib5Base + vendasIsentasBase)
   };
 }
 
@@ -789,6 +1017,31 @@ function mostrarResultado(data, ms) {
     ico.textContent='🟡'; title.textContent='Alertas Pendentes'; sub.textContent='Revisa os alertas antes de submeter';
   }
 
+  // Avisos da Camada 1 (ex: empresa detectada automaticamente, taxa
+  // inconsistente no documento original, etc.)
+  const avisosWrap = document.getElementById('avisos-extraccao-wrap');
+  const avisosLista = document.getElementById('avisos-extraccao-lista');
+  if (data.avisosExtraccao && data.avisosExtraccao.length > 0) {
+    avisosLista.innerHTML = data.avisosExtraccao.map(a => `<div style="margin-bottom:4px">• ${a}</div>`).join('');
+    avisosWrap.style.display = 'block';
+  } else {
+    avisosWrap.style.display = 'none';
+  }
+
+  // Lançamentos que a validação determinística não conseguiu confirmar
+  const revisaoWrap = document.getElementById('revisao-wrap');
+  const revisaoLista = document.getElementById('revisao-lista');
+  if (data.lancamentosParaRevisao && data.lancamentosParaRevisao.length > 0) {
+    revisaoLista.innerHTML = data.lancamentosParaRevisao.map(r => {
+      const desc = (r.lancamento && r.lancamento.descricao) || '(sem descrição)';
+      const ficheiro = r.ficheiro ? `[${r.ficheiro}] ` : '';
+      return `<div style="margin-bottom:6px">• ${ficheiro}<b>${desc}</b><br/><span style="font-size:11px;color:var(--text3)">${r.motivo}</span></div>`;
+    }).join('');
+    revisaoWrap.style.display = 'block';
+  } else {
+    revisaoWrap.style.display = 'none';
+  }
+
   const ap = data.apuramento || {};
   document.getElementById('a-liq').textContent     = fmzn(ap.ivaLiquidado);
   document.getElementById('a-ded').textContent     = fmzn(ap.ivaDedutivel);
@@ -796,11 +1049,10 @@ function mostrarResultado(data, ms) {
   document.getElementById('a-pagar').textContent   = fmzn(ap.ivaEntregar);
   document.getElementById('a-recuperar').textContent = fmzn(ap.creditoReportar);
 
-  const ops = data.resumo ? ((data.resumo.vendasTributadas||{}).base || 0) > 0 ? '—' : '—' : '—';
-  document.getElementById('k-total').textContent   = data.resumo ? (data.resumo.vendasTributadas ? '✓' : '0') : '0';
-  document.getElementById('k-verif').textContent   = '—';
-  document.getElementById('k-alertas').textContent = data.alertas || 0;
-  document.getElementById('k-erros').textContent   = data.erros   || 0;
+  document.getElementById('k-total').textContent   = data.lancamentosProcessados != null ? data.lancamentosProcessados : (data.resumo ? (data.resumo.vendasTributadas16 ? '✓' : '0') : '0');
+  document.getElementById('k-verif').textContent   = data.lancamentosProcessados != null ? data.lancamentosProcessados : '—';
+  document.getElementById('k-alertas').textContent = data.alertas || (data.avisosExtraccao ? data.avisosExtraccao.length : 0) || 0;
+  document.getElementById('k-erros').textContent   = data.erros || (data.lancamentosParaRevisao ? data.lancamentosParaRevisao.length : 0) || 0;
 
   document.getElementById('result-wrap').style.display = 'block';
   document.getElementById('result-wrap').scrollIntoView({ behavior:'smooth', block:'start' });
@@ -828,6 +1080,16 @@ function dlPDF(tipo) {
   const url = tipo==='formulario' ? resultado.pdfFormulario : resultado.pdfRelatorio;
   if (url) { window.open(url,'_blank'); return; }
   toast('Sem URL — verifica a ligação ao GAS','warn');
+}
+function dlExcelPDF() {
+  if (!resultado) { toast('Sem resultado — processa primeiro','warn'); return; }
+  if (resultado.pdfFormularioExcel) { window.open(resultado.pdfFormularioExcel,'_blank'); return; }
+  toast(resultado.excelErro ? 'Erro ao gerar Excel: ' + resultado.excelErro : 'Template Excel não configurado (TEMPLATE_IVA_ID)','warn');
+}
+function dlExcelXlsx() {
+  if (!resultado) { toast('Sem resultado — processa primeiro','warn'); return; }
+  if (resultado.xlsxFormulario) { window.open(resultado.xlsxFormulario,'_blank'); return; }
+  toast(resultado.excelErro ? 'Erro ao gerar Excel: ' + resultado.excelErro : 'Template Excel não configurado (TEMPLATE_IVA_ID)','warn');
 }
 function dlDoc(tipo) {
   if (!resultado) { toast('Sem resultado','warn'); return; }
