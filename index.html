@@ -698,7 +698,11 @@ async function iniciarDocumentoBruto({ gasUrl, empresa, nuit, periodo, activ, cr
   for (const f of files) {
     const b64 = await toBase64(f);
     arquivos.push(b64);
-    log('Preparado: ' + f.name + ' (' + (f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB') + ')', 'ok');
+    const tamanhoB64KB = Math.round((b64.conteudo || '').length / 1024);
+    log('Preparado: ' + f.name + ' (' + (f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB') + ') | base64: ' + tamanhoB64KB + 'KB | tipo: ' + (b64.tipo || '(vazio)'), 'ok');
+    if (!b64.conteudo || b64.conteudo.length === 0) {
+      log('⚠️ ATENÇÃO: conteúdo base64 de ' + f.name + ' está VAZIO!', 'err');
+    }
   }
   setStep('s1','done');
 
@@ -712,15 +716,18 @@ async function iniciarDocumentoBruto({ gasUrl, empresa, nuit, periodo, activ, cr
     arquivos
   };
 
+  const payloadStr = JSON.stringify(payload);
+  log('Payload total: ' + Math.round(payloadStr.length / 1024) + 'KB | arquivos no payload: ' + payload.arquivos.length, 'ok');
   log('A enviar ' + arquivos.length + ' documento(s) para leitura por IA...');
   const resp = await fetch(gasUrl, {
     method:  'POST',
     headers: { 'Content-Type': 'text/plain' },
-    body:    JSON.stringify(payload)
+    body:    payloadStr
   });
 
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
   const data = await resp.json();
+  log('Resposta do GAS recebida: ' + JSON.stringify(data).substring(0, 300), 'ok');
   if (!data.ok) throw new Error(data.erro || 'Erro no GAS');
   setStep('s2','done'); log('GAS recebeu, a processar...', 'ok');
 
