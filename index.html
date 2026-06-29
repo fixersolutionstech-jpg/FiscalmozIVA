@@ -727,8 +727,17 @@ async function iniciarDocumentoBruto({ gasUrl, empresa, nuit, periodo, activ, cr
 
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
   const data = await resp.json();
-  log('Resposta do GAS recebida: ' + JSON.stringify(data).substring(0, 300), 'ok');
+  log('Resposta do GAS recebida (' + Math.round(JSON.stringify(data).length/1024) + 'KB)', 'ok');
   if (!data.ok) throw new Error(data.erro || 'Erro no GAS');
+
+  // DIAGNÓSTICO TEMPORÁRIO — mostra o log interno do GAS aqui, porque
+  // o painel de Execuções não está a abrir para chamadas via doPost.
+  if (data.data && data.data.debug && data.data.debug.length > 0) {
+    log('━━━ LOG INTERNO DO GAS ━━━', 'warn');
+    data.data.debug.forEach(linha => log('[GAS] ' + linha, ''));
+    log('━━━ FIM DO LOG INTERNO ━━━', 'warn');
+  }
+
   setStep('s2','done'); log('GAS recebeu, a processar...', 'ok');
 
   setStep('s3','active'); prog(50,'IA a ler e normalizar documentos...');
