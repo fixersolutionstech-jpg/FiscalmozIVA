@@ -227,6 +227,7 @@ body::after{content:'';position:fixed;top:-200px;left:50%;transform:translateX(-
   .dl-grid{grid-template-columns:1fr}
 }
 </style>
+<script src="fixeros-auth.js"></script>
 </head>
 <body>
 <div class="app">
@@ -499,13 +500,15 @@ function setModo(modo) {
 }
 const historico = [];
 
-// ── INIT ──
+// ── INIT (protegido por login FixerOS) ──
 window.addEventListener('load', () => {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
-  const saved = localStorage.getItem(KEY_URL);
-  if (saved) { document.getElementById('gas-url').value = saved; document.getElementById('gas-url').dispatchEvent(new Event('input')); }
-  const now = new Date();
-  document.getElementById('periodo').value = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  FixerAuth.exigirLogin('fiscal').then(() => {
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+    const saved = localStorage.getItem(KEY_URL);
+    if (saved) { document.getElementById('gas-url').value = saved; document.getElementById('gas-url').dispatchEvent(new Event('input')); }
+    const now = new Date();
+    document.getElementById('periodo').value = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  }).catch(() => { /* gate de login já está visível, nada a fazer aqui */ });
 });
 
 // ── TABS ──
@@ -648,6 +651,7 @@ async function iniciarCSV({ gasUrl, empresa, nuit, periodo, activ, credAnt, cred
 
   const payload = {
     modo: 'csv',
+    authToken: FixerAuth.getToken(),
     empresa: empresa || 'Empresa', nuit, periodo, actividade: activ,
     totais,
     textoOperacoes,
@@ -710,6 +714,7 @@ async function iniciarDocumentoBruto({ gasUrl, empresa, nuit, periodo, activ, cr
   setStep('s2','active'); prog(25,'A enviar para o GAS...');
   const payload = {
     modo: 'documento_bruto',
+    authToken: FixerAuth.getToken(),
     empresa, nuit, periodo, actividade: activ,
     creditoPeriodoAnterior: credAnt,
     creditosComunicados: credComunicados,
