@@ -1039,6 +1039,83 @@ async function toBase64(file) {
   });
 }
 
+// ============================================================
+// FiscalMoz 1.4 — IVA DEDUTÍVEL DAS COMPRAS (campos 08 a 11 do Modelo A)
+// Função PURA (sem Drive, sem IA, sem DOM): corre no Apps Script E na PWA — o build_front.py
+// embute este ficheiro no index.html, para que o modo CSV (totais no browser) e o modo
+// documento (totais no servidor) apliquem a MESMA regra. Não usar aqui APIs do Apps Script.
+//
+// CIVA art. 20.º (consolidado com a Lei 10/2025). Nota completa e fontes:
+// FIXER/02_PRODUCAO/fixer-os/referencias/iva_deducao_mocambique_2026.md
+// A mesma regra, com a conta PGC, existe no DocScan (gas/Lancador.js, lancRegraIVA_): manter as duas iguais.
+// Aqui só há texto (descrição da linha), taxa, categoria e actividade da empresa.
+// ============================================================
+var RIVA_RX_GASOLEO = /gasoleo|diesel/;
+var RIVA_RX_GASOLINA = /gasolina|sem chumbo|\bsuper\b|petrol\b/;
+var RIVA_RX_COMBUSTIVEL = /combustive|carburante/;
+var RIVA_RX_MAQUINA = /gerador|maquina|tractor|trator|empilhador|grua|retroescavadora|bulldozer|compactador|motobomba/;
+var RIVA_RX_VIATURA_TURISMO = /viatura ligeira|ligeiro de passageiros|automovel|\bcarro\b|motorizada|motociclo|\bmota\b|barco de recreio|helicoptero|aviao/;
+var RIVA_RX_VIAGENS = /bilhete|passagem aerea|viagem|deslocac|\btaxi\b|\buber\b|\byango\b/;
+var RIVA_RX_REFEICOES = /refeic|restaurante|almoco|jantar|pequeno.almoco|lanche|catering|bebida|cerveja|refrigerante|alojamento|hotel|hospedagem|pensao|\blodge\b|tabaco|cigarro|representac/;
+var RIVA_RX_TELEMOVEL = /recarga|telemovel|celular|vodacom|movitel|tmcel|\bmcel\b/;
+var RIVA_RX_FIXO = /telefone fixo|\bfixo\b|\btdm\b/;
+var RIVA_RX_COMUNICACOES = /internet|dados moveis|fibra|wi.?fi|comunicac/;
+
+function rivaSemAcentos_(t) { return String(t == null ? '' : t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+
+// op: { descricao, taxa, categoria ('compra_outros' | 'compra_existencias' | 'compra_imobilizado' | 'compra_importacao'), actividade }
+// Devolve { pct: 1 | 0.5 | 0, motivo, aviso }  (aviso só quando há dúvida real e a opção foi a prudente)
+function regraIVACompra_(op) {
+  op = op || {};
+  var txt = rivaSemAcentos_(op.descricao);
+  var cat = rivaSemAcentos_(op.categoria);
+  var transportadora = /transport/.test(rivaSemAcentos_(op.actividade));
+  function r(pct, motivo, aviso) { return { pct: pct, motivo: motivo, aviso: aviso || '' }; }
+  if (Number(op.taxa) === 5) return r(0, 'compra à taxa reduzida de 5% (art. 20.º, n.º 2)');
+  if (cat.indexOf('existenc') !== -1) return r(1, '');                                     // inventário ou revenda (art. 20.º, n.º 3, a))
+  var gasoleo = RIVA_RX_GASOLEO.test(txt), gasolina = RIVA_RX_GASOLINA.test(txt);
+  if (gasoleo || gasolina || RIVA_RX_COMBUSTIVEL.test(txt)) {
+    if (transportadora) return r(1, 'transportadora: o combustível é a própria actividade (indicação do contabilista)');
+    if (gasoleo && !gasolina) return RIVA_RX_MAQUINA.test(txt) ? r(1, '') : r(0.5, 'gasóleo: 50% (art. 20.º, n.º 1, b))');
+    if (gasolina && !gasoleo) return r(0, 'gasolina e outros combustíveis de viaturas: 0% (art. 20.º, n.º 1, b))');
+    return r(0, 'combustível de tipo não identificado: 0%', 'combustível sem tipo na descrição: deduzido 0% (gasóleo deduz 50%, gasolina 0%) — indique "gasóleo" ou "gasolina"');
+  }
+  if (RIVA_RX_VIATURA_TURISMO.test(txt)) return transportadora ? r(1, '') : r(0, 'viaturas de turismo, motos, barcos e aviões: 0% (art. 20.º, n.º 1, a))');
+  if (RIVA_RX_VIAGENS.test(txt)) return r(0, 'transportes e viagens: 0% (art. 20.º, n.º 1, c))');
+  if (RIVA_RX_REFEICOES.test(txt)) return r(0, 'alojamento, alimentação, bebidas, tabaco ou recepção: 0% (art. 20.º, n.º 1, d))');
+  if (RIVA_RX_FIXO.test(txt)) return r(1, '');
+  if (RIVA_RX_TELEMOVEL.test(txt)) return r(0, 'telemóvel: 0% (art. 20.º, n.º 1, e))');
+  if (RIVA_RX_COMUNICACOES.test(txt)) return r(0, 'comunicações que não são telefone fixo: 0%', 'internet e dados deduzidos a 0% por prudência (só o telefone fixo é dedutível) — confirmar com o contabilista');
+  return r(1, '');
+}
+
+// Aplica a regra a uma lista de compras e devolve o IVA dedutível por linha + um resumo para o relatório.
+// linhas: [{ descricao, taxa, categoria, iva }] → { dedutivel: [n...], resumo: [{ motivo, linhas, ivaNaoDedutivel }], avisos: [...], ivaNaoDedutivel }
+function aplicarRegrasIVA_(linhas, actividade) {
+  var porMotivo = {}, avisos = [], total = 0, ded = [];
+  (linhas || []).forEach(function(l) {
+    var iva = Number(l.iva) || 0;
+    var reg = regraIVACompra_({ descricao: l.descricao, taxa: l.taxa, categoria: l.categoria, actividade: actividade });
+    var d = Math.round(iva * reg.pct * 100) / 100, nd = Math.round((iva - d) * 100) / 100;
+    ded.push(d);
+    if (nd !== 0 && reg.motivo) {
+      var m = porMotivo[reg.motivo] = porMotivo[reg.motivo] || { motivo: reg.motivo, linhas: 0, ivaNaoDedutivel: 0 };
+      m.linhas++; m.ivaNaoDedutivel = Math.round((m.ivaNaoDedutivel + nd) * 100) / 100;
+      total = Math.round((total + nd) * 100) / 100;
+    }
+    if (reg.aviso && iva !== 0 && avisos.indexOf(reg.aviso) === -1) avisos.push(reg.aviso);
+  });
+  var resumo = Object.keys(porMotivo).map(function(k) { return porMotivo[k]; });
+  return { dedutivel: ded, resumo: resumo, avisos: avisos, ivaNaoDedutivel: total };
+}
+
+// Texto para avisos/relatório: "IVA não dedutível retirado dos campos 08–11: 183,52 MZN — gasóleo: 50% (…) [1 linha]; …"
+function textoRegrasIVA_(r) {
+  if (!r || !r.resumo || !r.resumo.length) return '';
+  return 'IVA não dedutível retirado dos campos 08–11: ' + r.ivaNaoDedutivel.toFixed(2) + ' MZN — ' +
+    r.resumo.map(function(m) { return m.motivo + ' [' + m.linhas + ' linha(s), ' + m.ivaNaoDedutivel.toFixed(2) + ']'; }).join('; ') + '.';
+}
+
 // Lógica de leitura e cálculo do IVA (modo CSV estruturado).
 // v1.3-fiabilidade (2026-10-20): separador , ou ; e aspas; números em formato
 // português (1.250,00); taxa lida como número (16.00% já não é "isenta");
@@ -1340,7 +1417,7 @@ function verificarConsistenciaIVA(operacoes) {
 // Agrega operações pelas categorias do Modelo A (campos 01-12). Os nomes
 // "legados" mantêm-se para fronts/servidores antigos; o servidor v1.3 usa
 // sempre os campos novos quando existem (sem somar o legado por cima).
-function calcularTotais(operacoes, credAnt) {
+function calcularTotais(operacoes, credAnt, actividade) {
   let vendasTrib16Base = 0, vendasTrib16IVA = 0;
   let vendasTrib5Base  = 0, vendasTrib5IVA  = 0;
   let vendasIsentasComDireitoBase = 0;
@@ -1352,17 +1429,26 @@ function calcularTotais(operacoes, credAnt) {
   let comprasImportacoesBase = 0, comprasImportacoesIVA = 0;
   let comprasNaoDeduBase     = 0;
 
+  // v1.4: só a parte DEDUTÍVEL do IVA das compras conta (gas/RegrasIVA.js, a mesma regra do servidor)
+  const CAT_COMPRA = { COMPRA_IMOBILIZADO: 'compra_imobilizado', COMPRA_EXISTENCIAS: 'compra_existencias', COMPRA_OUTROS: 'compra_outros', COMPRA_IMPORTACAO: 'compra_importacao' };
+  const compras = operacoes.filter((op) => CAT_COMPRA[op.tipo]);
+  const regrasIva = typeof aplicarRegrasIVA_ === 'function'
+    ? aplicarRegrasIVA_(compras.map((op) => ({ descricao: op.descricao, taxa: op.taxa, categoria: CAT_COMPRA[op.tipo], iva: op.iva })), actividade)
+    : { dedutivel: compras.map((op) => op.iva), resumo: [], avisos: [], ivaNaoDedutivel: 0 };
+  const ivaDed = new Map(compras.map((op, i) => [op, regrasIva.dedutivel[i]]));
+
   for (const op of operacoes) {
+    const ivaC = ivaDed.has(op) ? ivaDed.get(op) : op.iva;
     switch (op.tipo) {
       case 'VENDA_TRIBUTADA_16': vendasTrib16Base += op.base; vendasTrib16IVA += op.iva; break;
       case 'VENDA_TRIBUTADA_5': vendasTrib5Base += op.base; vendasTrib5IVA += op.iva; break;
       case 'VENDA_ISENTA_COM_DIREITO': vendasIsentasComDireitoBase += op.base; break;
       case 'VENDA_ISENTA_ART18': vendasIsentasArt18Base += op.base; break;
       case 'VENDA_ISENTA_SEM_DIREITO': vendasIsentasSemDireitoBase += op.base; break;
-      case 'COMPRA_IMOBILIZADO': comprasImobilizadoBase += op.base; comprasImobilizadoIVA += op.iva; break;
-      case 'COMPRA_EXISTENCIAS': comprasExistenciasBase += op.base; comprasExistenciasIVA += op.iva; break;
-      case 'COMPRA_IMPORTACAO': comprasImportacoesBase += op.base; comprasImportacoesIVA += op.iva; break;
-      case 'COMPRA_OUTROS': comprasOutrosBase += op.base; comprasOutrosIVA += op.iva; break;
+      case 'COMPRA_IMOBILIZADO': comprasImobilizadoBase += op.base; comprasImobilizadoIVA += ivaC; break;
+      case 'COMPRA_EXISTENCIAS': comprasExistenciasBase += op.base; comprasExistenciasIVA += ivaC; break;
+      case 'COMPRA_IMPORTACAO': comprasImportacoesBase += op.base; comprasImportacoesIVA += ivaC; break;
+      case 'COMPRA_OUTROS': comprasOutrosBase += op.base; comprasOutrosIVA += ivaC; break;
       case 'COMPRA_NAO_DEDUTIVEL': comprasNaoDeduBase += op.base; break;
     }
   }
@@ -1386,6 +1472,8 @@ function calcularTotais(operacoes, credAnt) {
     comprasImportacoesBase: r2(comprasImportacoesBase), comprasImportacoesIVA: r2(comprasImportacoesIVA),
     comprasNaoDeduBase: r2(comprasNaoDeduBase),
     creditoPeriodoAnterior: credAnt,
+    ivaNaoDedutivel: regrasIva.ivaNaoDedutivel,
+    regrasIva: { resumo: regrasIva.resumo, avisos: regrasIva.avisos, ivaNaoDedutivel: regrasIva.ivaNaoDedutivel },
 
     // Campos legados
     vendasTribBase: r2(vendasTrib16Base), vendasTribIVA: r2(vendasTrib16IVA),
@@ -1586,8 +1674,12 @@ async function iniciarCSV({ empresa, nuit, periodo, activ, credAnt, credComunica
   if (excluidas.length) log(excluidas.length + ' linha(s) excluídas dos totais: ver a lista no resultado', 'warn');
   if (operacoes.length === 0) throw new Error('Nenhuma linha válida para declarar: todas foram excluídas (ver detalhes).');
 
-  const totais = calcularTotais(operacoes, credAnt);
+  const totais = calcularTotais(operacoes, credAnt, activ);
   totais.creditosComunicados = credComunicados;
+  // v1.4: IVA não dedutível (CIVA art. 20.º) — vai para o relatório e para o ecrã
+  const txtIva = typeof textoRegrasIVA_ === 'function' ? textoRegrasIVA_(totais.regrasIva) : '';
+  if (txtIva) { avisosLeitura.push(txtIva); log(txtIva, 'warn'); }
+  (totais.regrasIva.avisos || []).forEach((a) => { avisosLeitura.push(a); log('Aviso: ' + a, 'warn'); });
   log('Totais calculados: IVA liquidado=' + totais.ivaLiquidado.toFixed(2) + ' | IVA dedutível=' + totais.ivaDedutivel.toFixed(2), 'ok');
   setStep('s1', 'done');
 
