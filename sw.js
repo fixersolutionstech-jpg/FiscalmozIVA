@@ -1,8 +1,8 @@
-// FiscalMoz — Service Worker (gerado por _SISTEMA/scripts/gerar_sw.py em 2026-10-20)
+// FiscalMoz — Service Worker (gerado por _SISTEMA/scripts/gerar_sw.py em 2026-10-23)
 // Rede primeiro (quem já usa a app recebe sempre a versão publicada) e cache versionada.
 // Caminhos RELATIVOS: no GitHub Pages a app vive em /<repo>/ — "/index.html" apontava para a raiz do domínio
 // e a instalação falhava. Ao publicar um front novo, voltar a gerar (muda CACHE).
-const CACHE = 'fiscalmoz-2026-10-20';
+const CACHE = 'fiscalmoz-2026-10-23';
 const ASSETS = ["./", "./index.html", "./manifest.json", "./fixeros-auth.js", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener('install', e => {
